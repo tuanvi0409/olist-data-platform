@@ -1,0 +1,27 @@
+# Python virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Environment variables and credentials
+.env
+
+# Raw and processed data
+data/raw/*
+data/processed/*
+
+# Keep empty folders in Git
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# dbt generated files
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+
+# Editor and operating system
+.vscode/
+.DS_Store
+Thumbs.db
