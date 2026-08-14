@@ -1,0 +1,35 @@
+version: 2
+
+sources:
+  - name: olist_raw
+    description: Raw Olist e-commerce data loaded from CSV files
+    database: olist_dw
+    schema: raw
+
+    tables:
+      - name: customers
+        description: Raw customer records
+
+      - name: geolocation
+        description: Raw Brazilian geolocation records
+
+      - name: orders
+        description: Raw order records
+
+      - name: order_items
+        description: Raw order item records
+
+      - name: order_payments
+        description: Raw order payment records
+
+      - name: order_reviews
+        description: Raw order review records
+
+      - name: products
+        description: Raw product records
+
+      - name: sellers
+        description: Raw seller records
+
+      - name: product_category_translation
+        description: Product category translations
