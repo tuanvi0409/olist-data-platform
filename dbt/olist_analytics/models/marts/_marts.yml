@@ -72,3 +72,111 @@ models:
       - name: is_late_delivery
         data_tests:
           - not_null
+
+  - name: fct_order_items
+    description: Order item fact table with one row per order item
+    columns:
+      - name: order_item_key
+        data_tests:
+          - not_null
+          - unique
+
+      - name: order_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_id
+
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+
+      - name: product_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_id
+
+      - name: seller_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_sellers')
+                field: seller_id
+
+      - name: item_price
+        data_tests:
+          - not_null
+
+      - name: freight_value
+        data_tests:
+          - not_null
+
+      - name: total_item_value
+        data_tests:
+          - not_null
+  
+  - name: mart_daily_sales
+    description: Daily order, customer, revenue and delivery KPIs
+    columns:
+      - name: order_purchase_date
+        data_tests:
+          - not_null
+          - unique
+
+      - name: order_count
+        data_tests:
+          - not_null
+
+      - name: unique_customer_count
+        data_tests:
+          - not_null
+
+      - name: delivered_revenue
+        data_tests:
+          - not_null
+
+  - name: mart_state_sales
+    description: Sales and delivery KPIs aggregated by customer state
+    columns:
+      - name: customer_state
+        data_tests:
+          - not_null
+          - unique
+
+      - name: order_count
+        data_tests:
+          - not_null
+
+      - name: delivered_revenue
+        data_tests:
+          - not_null
+
+  - name: mart_category_sales
+    description: Delivered sales KPIs aggregated by product category
+    columns:
+      - name: product_category_name
+        data_tests:
+          - not_null
+          - unique
+
+      - name: product_category_name_english
+        data_tests:
+          - not_null
+
+      - name: item_count
+        data_tests:
+          - not_null
+
+      - name: total_sales_value
+        data_tests:
+          - not_null

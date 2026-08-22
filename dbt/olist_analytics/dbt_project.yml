@@ -38,5 +38,9 @@ models:
     marts:
       dimensions:
         +materialized: table
+        
       facts:
         +materialized: table  
+
+      aggregates:
+        +materialized: table
