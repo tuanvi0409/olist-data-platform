@@ -1,0 +1,74 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: Customer dimension with one row per customer_id
+    columns:
+      - name: customer_id
+        data_tests:
+          - not_null
+          - unique
+
+      - name: customer_unique_id
+        data_tests:
+          - not_null
+
+  - name: dim_products
+    description: Product dimension with one row per product_id
+    columns:
+      - name: product_id
+        data_tests:
+          - not_null
+          - unique
+
+  - name: dim_sellers
+    description: Seller dimension with one row per seller_id
+    columns:
+      - name: seller_id
+        data_tests:
+          - not_null
+          - unique
+
+  - name: fct_orders
+    description: Order fact table with one row per order_id
+    columns:
+      - name: order_id
+        data_tests:
+          - not_null
+          - unique
+
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+
+      - name: order_status
+        data_tests:
+          - not_null
+
+      - name: item_count
+        data_tests:
+          - not_null
+
+      - name: total_item_value
+        data_tests:
+          - not_null
+
+      - name: total_freight_value
+        data_tests:
+          - not_null
+
+      - name: total_payment_value
+        data_tests:
+          - not_null
+
+      - name: is_delivered
+        data_tests:
+          - not_null
+
+      - name: is_late_delivery
+        data_tests:
+          - not_null
