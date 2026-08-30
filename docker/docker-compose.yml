@@ -4,11 +4,11 @@ services:
     container_name: olist_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: olist_user
-      POSTGRES_PASSWORD: olist_password
-      POSTGRES_DB: olist_dw
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     ports:
-      - "5433:5432"
+      - "${DB_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     mem_limit: 512m
