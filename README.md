@@ -20,3 +20,9 @@ Fact and dimension tables
     ->
 Aggregate data marts
 ```
+
+### dbt Lineage
+
+The lineage graph shows dependencies from raw sources through staging and intermediate transformations to fact, dimension, and aggregate models.
+
+![dbt lineage](docs/images/dbt-lineage.png)
