@@ -1,5 +1,8 @@
 import argparse
+import hashlib
+import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -97,8 +100,20 @@ def load_csv_to_postgres(csv_name, table_name):
     print(f"Hoàn thành {db_schema}.{table_name}")
 
 
-def upsert_orders(csv_name, table_name):
-    """UPSERT orders theo unique key order_id."""
+def calculate_row_hash(record):
+    """Tính SHA-256 từ dictionary chỉ chứa các cột nguồn."""
+    payload = json.dumps(
+        record,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def upsert_orders(csv_name, table_name, batch_size=5000):
+    """Thêm orders mới, chỉ cập nhật orders có nội dung thay đổi."""
     csv_path = RAW_DATA_DIR / csv_name
 
     if not csv_path.exists():
@@ -106,37 +121,61 @@ def upsert_orders(csv_name, table_name):
 
     print(f"Đang đọc {csv_name}...")
 
-    dataframe = pd.read_csv(csv_path)
+    # Raw orders đang lưu các cột nguồn dưới dạng text.
+    dataframe = pd.read_csv(csv_path, dtype=str)
 
-    # Kiểm tra business key trước khi ghi database
+    source_columns = [
+        "order_id",
+        "customer_id",
+        "order_status",
+        "order_purchase_timestamp",
+        "order_approved_at",
+        "order_delivered_carrier_date",
+        "order_delivered_customer_date",
+        "order_estimated_delivery_date",
+    ]
+
+    missing = sorted(set(source_columns) - set(dataframe.columns))
+    unexpected = sorted(set(dataframe.columns) - set(source_columns))
+
+    if missing or unexpected:
+        raise ValueError(
+            f"CSV orders sai cấu trúc: thiếu={missing}, dư={unexpected}"
+        )
+
+    if dataframe.empty:
+        raise ValueError("CSV orders không có dòng dữ liệu")
+
     if dataframe["order_id"].isna().any():
         raise ValueError("orders có order_id NULL")
+
+    if dataframe["order_id"].str.strip().eq("").any():
+        raise ValueError("orders có order_id chỉ chứa khoảng trắng")
 
     if dataframe["order_id"].duplicated().any():
         raise ValueError("orders có order_id bị trùng")
 
-    # Chuyển NaN của pandas thành None để PostgreSQL nhận NULL
+    # PostgreSQL sẽ nhận None thành NULL.
     dataframe = dataframe.astype(object).where(
         pd.notna(dataframe),
         None,
     )
 
-    metadata = MetaData()
-
     orders_table = Table(
         table_name,
-        metadata,
+        MetaData(),
         schema=db_schema,
         autoload_with=engine,
     )
 
     update_columns = [
         column
-        for column in dataframe.columns
+        for column in source_columns
         if column != "order_id"
-    ]
+    ] + ["_row_hash", "_loaded_at"]
 
-    batch_size = 5000
+    rows_written = 0
+    loaded_at = datetime.now(timezone.utc)
 
     print(
         f"Đang UPSERT {len(dataframe):,} dòng "
@@ -149,6 +188,11 @@ def upsert_orders(csv_name, table_name):
                 start:start + batch_size
             ].to_dict(orient="records")
 
+            for record in batch:
+                # Tính hash trước khi thêm hai cột metadata.
+                record["_row_hash"] = calculate_row_hash(record)
+                record["_loaded_at"] = loaded_at
+
             statement = pg_insert(orders_table).values(batch)
 
             statement = statement.on_conflict_do_update(
@@ -157,11 +201,17 @@ def upsert_orders(csv_name, table_name):
                     column: statement.excluded[column]
                     for column in update_columns
                 },
-            )
+                where=orders_table.c["_row_hash"].is_distinct_from(
+                    statement.excluded["_row_hash"]
+                ),
+            ).returning(orders_table.c.order_id)
 
-            connection.execute(statement)
+            result = connection.execute(statement)
+            rows_written += len(result.fetchall())
 
-    print(f"Hoàn thành UPSERT {db_schema}.{table_name}")
+    print(f"Đã đọc: {len(dataframe):,} dòng")
+    print(f"Đã ghi (INSERT + UPDATE): {rows_written:,} dòng")
+    print(f"Không đổi: {len(dataframe) - rows_written:,} dòng")
 
 
 def main():
