@@ -4,7 +4,8 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-
+import sys
+from uuid import uuid4
 import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import URL, MetaData, Table, create_engine, text
@@ -112,16 +113,79 @@ def calculate_row_hash(record):
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def upsert_orders(csv_name, table_name, batch_size=5000):
-    """Thêm orders mới, chỉ cập nhật orders có nội dung thay đổi."""
+
+def get_pipeline_run_log_table(connection):
+    """Đọc cấu trúc bảng nhật ký bằng connection đang có."""
+    return Table(
+        "pipeline_run_log",
+        MetaData(),
+        schema="ops",
+        autoload_with=connection,
+    )
+
+
+def start_pipeline_run(csv_name, table_name):
+    """Tạo và commit bản ghi RUNNING trước khi ingestion bắt đầu."""
+    run_id = uuid4()
+
+    with engine.begin() as connection:
+        run_log = get_pipeline_run_log_table(connection)
+
+        connection.execute(
+            run_log.insert().values(
+                run_id=run_id,
+                pipeline_name="raw_orders_ingestion",
+                source_file=csv_name,
+                target_table=f"{db_schema}.{table_name}",
+                status="RUNNING",
+                started_at=datetime.now(timezone.utc),
+            )
+        )
+
+    return run_id
+
+
+def finish_pipeline_run(
+    connection, run_id, status, metrics=None, error_message=None
+):
+    """Kết thúc lần chạy trong transaction do bên gọi quản lý."""
+    if status not in ("SUCCESS", "FAILED"):
+        raise ValueError("Trạng thái kết thúc phải là SUCCESS hoặc FAILED")
+
+    metrics = metrics or {}
+    run_log = get_pipeline_run_log_table(connection)
+
+    result = connection.execute(
+        run_log.update()
+        .where(run_log.c.run_id == run_id)
+        .where(run_log.c.status == "RUNNING")
+        .values(
+            status=status,
+            finished_at=datetime.now(timezone.utc),
+            rows_read=metrics.get("rows_read"),
+            rows_written=metrics.get("rows_written"),
+            rows_unchanged=metrics.get("rows_unchanged"),
+            error_message=error_message,
+        )
+    )
+
+    if result.rowcount != 1:
+        raise RuntimeError(
+            f"Không tìm thấy run RUNNING để cập nhật: {run_id}"
+        )
+
+
+def upsert_orders(csv_name, table_name, batch_size=5000, run_id=None):
+    """UPSERT theo hash; ghi SUCCESS cùng transaction nếu có run_id."""
+    if batch_size <= 0:
+        raise ValueError("batch_size phải lớn hơn 0")
+
     csv_path = RAW_DATA_DIR / csv_name
 
     if not csv_path.exists():
         raise FileNotFoundError(f"Không tìm thấy file: {csv_path}")
 
     print(f"Đang đọc {csv_name}...")
-
-    # Raw orders đang lưu các cột nguồn dưới dạng text.
     dataframe = pd.read_csv(csv_path, dtype=str)
 
     source_columns = [
@@ -155,7 +219,6 @@ def upsert_orders(csv_name, table_name, batch_size=5000):
     if dataframe["order_id"].duplicated().any():
         raise ValueError("orders có order_id bị trùng")
 
-    # PostgreSQL sẽ nhận None thành NULL.
     dataframe = dataframe.astype(object).where(
         pd.notna(dataframe),
         None,
@@ -189,7 +252,6 @@ def upsert_orders(csv_name, table_name, batch_size=5000):
             ].to_dict(orient="records")
 
             for record in batch:
-                # Tính hash trước khi thêm hai cột metadata.
                 record["_row_hash"] = calculate_row_hash(record)
                 record["_loaded_at"] = loaded_at
 
@@ -209,10 +271,68 @@ def upsert_orders(csv_name, table_name, batch_size=5000):
             result = connection.execute(statement)
             rows_written += len(result.fetchall())
 
-    print(f"Đã đọc: {len(dataframe):,} dòng")
-    print(f"Đã ghi (INSERT + UPDATE): {rows_written:,} dòng")
-    print(f"Không đổi: {len(dataframe) - rows_written:,} dòng")
+        metrics = {
+            "rows_read": len(dataframe),
+            "rows_written": rows_written,
+            "rows_unchanged": len(dataframe) - rows_written,
+        }
 
+        # Cùng connection: dữ liệu và SUCCESS commit cùng nhau.
+        if run_id is not None:
+            finish_pipeline_run(
+                connection,
+                run_id,
+                "SUCCESS",
+                metrics,
+            )
+
+    print(f"Đã đọc: {metrics['rows_read']:,} dòng")
+    print(f"Đã ghi (INSERT + UPDATE): {metrics['rows_written']:,} dòng")
+    print(f"Không đổi: {metrics['rows_unchanged']:,} dòng")
+
+    return metrics
+
+
+def run_orders_ingestion(csv_name, table_name, batch_size=5000):
+    """Quản lý nhật ký và lỗi của một lần ingestion orders."""
+    run_id = start_pipeline_run(csv_name, table_name)
+    print(f"Run ID: {run_id}")
+
+    try:
+        metrics = upsert_orders(
+            csv_name,
+            table_name,
+            batch_size=batch_size,
+            run_id=run_id,
+        )
+
+    except Exception as error:
+        # Nếu lỗi xảy ra khi ghi dữ liệu, transaction đã rollback.
+        # Ghi FAILED trong một transaction riêng.
+        try:
+            with engine.begin() as connection:
+                finish_pipeline_run(
+                    connection,
+                    run_id,
+                    "FAILED",
+                    metrics={"rows_written": 0},
+                    error_message=(
+                        f"{type(error).__name__}: {error}"
+                    )[:4000],
+                )
+
+        except Exception as log_error:
+            print(
+                f"Không ghi được FAILED cho run {run_id}: {log_error}",
+                file=sys.stderr,
+            )
+
+        # Giữ lỗi gốc để terminal báo thất bại.
+        raise
+
+    print(f"Đã ghi nhật ký SUCCESS: {run_id}")
+
+    return {"run_id": run_id, **metrics}
 
 def main():
     args = parse_args()
@@ -224,7 +344,7 @@ def main():
             continue
 
         if table_name == "orders":
-            upsert_orders(csv_name, table_name)
+            run_orders_ingestion(csv_name, table_name)
         else:
             load_csv_to_postgres(csv_name, table_name)
 
