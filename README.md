@@ -116,6 +116,22 @@ After hash initialization, rerunning the unchanged baseline CSV reports:
 Không đổi: 99,441 dòng
 ```
 
+### Load an Orders Batch CSV
+
+To load an existing batch CSV:
+
+```powershell
+python .\ingestion\load_raw_data.py --table orders --csv-file .\data\raw\orders_batch.csv
+```
+
+The file must contain the same eight source columns as the original orders CSV.
+
+- `--csv-file` is supported only with `--table orders`.
+- Relative paths are resolved from the current working directory.
+- Omitting `--csv-file` uses the original orders CSV.
+- Orders absent from the batch remain in the database.
+- Each run reads the selected file in full and uses the existing UPSERT and run logging.
+
 ### Build and Test dbt Models
 
 After ingestion succeeds:
@@ -160,3 +176,4 @@ Both verification scripts use isolated test tables and clean up their fixtures.
 - Pipeline run log verification: 3/3 checks passed.
 - dbt build: 21 models and 85 data tests completed successfully.
 - dbt summary: PASS=106, WARN=0, ERROR=0, SKIP=0.
+

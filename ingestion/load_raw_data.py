@@ -47,7 +47,7 @@ csv_tables = {
 
 
 def parse_args():
-    """Đọc tham số dòng lệnh."""
+    """Đọc và kiểm tra tham số dòng lệnh."""
     parser = argparse.ArgumentParser(
         description="Nạp dữ liệu Olist vào PostgreSQL raw layer."
     )
@@ -62,7 +62,24 @@ def parse_args():
         ),
     )
 
-    return parser.parse_args()
+    parser.add_argument(
+        "--csv-file",
+        help=(
+            "Đường dẫn CSV riêng cho orders. Đường dẫn tương đối "
+            "tính từ thư mục đang chạy lệnh; chỉ dùng với --table orders."
+        ),
+    )
+
+    args = parser.parse_args()
+
+    if args.csv_file is not None:
+        if args.table != "orders":
+            parser.error("--csv-file chỉ dùng với --table orders")
+
+        if not args.csv_file.strip():
+            parser.error("--csv-file không được để trống")
+
+    return args
 
 
 def create_raw_schema():
@@ -344,7 +361,12 @@ def main():
             continue
 
         if table_name == "orders":
-            run_orders_ingestion(csv_name, table_name)
+            source_file = csv_name
+
+            if args.csv_file is not None:
+                source_file = str(Path(args.csv_file).resolve())
+
+            run_orders_ingestion(source_file, table_name)
         else:
             load_csv_to_postgres(csv_name, table_name)
 
